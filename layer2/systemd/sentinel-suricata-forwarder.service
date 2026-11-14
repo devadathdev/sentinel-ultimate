@@ -1,0 +1,19 @@
+[Unit]
+Description=SENTINEL Suricata Event Forwarder
+After=network-online.target suricata.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinel
+ExecStart=/usr/bin/python3 /opt/sentinel/layer2/suricata_forwarder.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/log/suricata
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+version: 1
+scheme: SENTINEL-2X-AES256-GCM
+inner:
+  algorithm: AES-256-GCM
+  key_source: KMS_OR_HSM
+  key_env: SENTINEL_CRYPTO_INNER_KEY
+  rotation_days: 90
+outer:
+  algorithm: AES-256-GCM
+  key_source: KMS_OR_HSM
+  key_env: SENTINEL_CRYPTO_OUTER_KEY
+  rotation_days: 90
+transport:
+  protocol: TLSv1.3
+  min_version: TLSv1.3
+  recommended_ciphers:
+    - TLS_AES_256_GCM_SHA384
+    - TLS_CHACHA20_POLY1305_SHA256
+rules:
+  independent_keys_required: true
+  nonce_reuse_forbidden: true
+  plaintext_key_storage_forbidden: true
+  tls_private_key_separate_from_aes_keys: true

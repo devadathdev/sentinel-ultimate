@@ -1,0 +1,11 @@
+{
+  "default": "deny",
+  "zones": {
+    "user": ["api_gateway"],
+    "ai": ["ai_gateway", "sandbox"],
+    "server": ["internal_services"],
+    "iot": ["telemetry_ingest"],
+    "management": ["admin_only"]
+  },
+  "high_risk_ai_tools": ["shell", "deploy", "force_push", "delete", "secrets", "network_admin"]
+}

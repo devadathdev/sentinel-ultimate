@@ -1,0 +1,11 @@
+{
+  "issuer": "https://identity.example.invalid/realms/sentinel",
+  "audience": "sentinel-api",
+  "token_algorithm": "RS256",
+  "token_lifetime_seconds": 300,
+  "refresh_token_lifetime_seconds": 86400,
+  "privileged_step_up_seconds": 300,
+  "require_mtls_for_service_networks": true,
+  "roles": ["viewer", "developer", "operator", "admin"],
+  "deny_by_default": true
+}

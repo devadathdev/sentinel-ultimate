@@ -1,0 +1,52 @@
+# SENTINEL Ultimate - Prometheus Configuration
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'sentinel'
+    environment: 'production'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []
+
+scrape_configs:
+  # SENTINEL API metrics
+  - job_name: 'sentinel-api'
+    static_configs:
+      - targets: ['sentinel:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # NGINX metrics (requires nginx-prometheus-exporter sidecar)
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx:9113']
+
+  # Suricata metrics (requires suricata stats endpoint)
+  - job_name: 'suricata'
+    static_configs:
+      - targets: ['suricata:9090']
+
+  # Redis metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:9121']
+
+  # Node Exporter (host metrics)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['host.docker.internal:9100']
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Cadvisor (container metrics)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['host.docker.internal:8080']

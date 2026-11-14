@@ -1,0 +1,17 @@
+identity:
+  issuer: https://identity.example.invalid/realms/sentinel
+  audience: sentinel-api
+  access_token_ttl_seconds: 300
+  privileged_step_up_seconds: 300
+  require_mtls_for_service_networks: true
+  deny_by_default: true
+
+roles:
+  viewer: [read]
+  developer: [read, write, execute:sandbox]
+  operator: [read, write, operate]
+  admin: [read, write, operate, admin, execute:sandbox]
+
+privileged_resources:
+  - management:config
+  - secret:*

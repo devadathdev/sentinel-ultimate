@@ -1,0 +1,22 @@
+# SENTINEL Suricata Forwarder - Minimal Python Image
+FROM python:3.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r forwarder --gid 1001 \
+    && useradd -r -g forwarder --uid 1001 --home-dir /app --shell /bin/false forwarder
+
+WORKDIR /app
+
+COPY --chown=forwarder:forwarder layer2/suricata_forwarder.py .
+COPY --chown=forwarder:forwarder requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+USER forwarder
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+ENTRYPOINT ["python", "suricata_forwarder.py"]

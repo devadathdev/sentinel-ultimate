@@ -1,0 +1,34 @@
+zones:
+  wan:
+    cidr: 0.0.0.0/0
+  user:
+    cidr: 10.10.10.0/24
+  ai:
+    cidr: 10.10.20.0/24
+  server:
+    cidr: 10.10.30.0/24
+  iot:
+    cidr: 10.10.40.0/24
+  management:
+    cidr: 10.10.50.0/24
+  data:
+    cidr: 10.10.60.0/24
+
+# Explicitly allowed zone-to-zone flows.
+flows:
+  - {src: user, dst: ai, proto: tcp, dports: [443]}
+  - {src: user, dst: server, proto: tcp, dports: [443]}
+  - {src: ai, dst: server, proto: tcp, dports: [443, 8443]}
+  - {src: server, dst: data, proto: tcp, dports: [5432, 6379]}
+  - {src: management, dst: server, proto: tcp, dports: [22, 443, 8443]}
+  - {src: management, dst: ai, proto: tcp, dports: [22, 443, 8443]}
+  - {src: iot, dst: ai, proto: tcp, dports: [443, 8883]}
+
+# Egress is allowlisted rather than open-ended.
+egress:
+  user: [53, 80, 443]
+  ai: [53, 443]
+  server: [53, 443]
+  iot: [53, 443, 8883]
+  management: [53, 443]
+  data: [53]

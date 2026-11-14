@@ -1,0 +1,55 @@
+# SENTINEL Ultimate - Environment Configuration
+# Copy to /etc/sentinel/environment and customize
+# chmod 600 /etc/sentinel/environment
+
+# ---------------------------------------------------------
+# SERVICE CONFIGURATION
+# ---------------------------------------------------------
+SENTINEL_HOST=0.0.0.0
+SENTINEL_PORT=8080
+SENTINEL_ENV=production
+SENTINEL_MAX_BODY_BYTES=1048576
+SENTINEL_RATE_LIMIT=120
+SENTINEL_TRUST_PROXY=true
+
+# ---------------------------------------------------------
+# ENCRYPTION - MASTER KEY (REQUIRED FOR PRODUCTION)
+# ---------------------------------------------------------
+# Generate with: python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+# Store in secret manager (HashiCorp Vault, AWS Secrets Manager, etc.)
+# NEVER commit this to version control!
+SENTINEL_MASTER_KEY=
+
+# ---------------------------------------------------------
+# IDENTITY / OIDC CONFIGURATION
+# ---------------------------------------------------------
+# OIDC Provider (Keycloak, Auth0, Azure AD, etc.)
+SENTINEL_OIDC_ISSUER=https://identity.example.invalid/realms/sentinel
+SENTINEL_OIDC_AUDIENCE=sentinel-api
+# JWKS URL for asymmetric verification (preferred over shared secret)
+SENTINEL_OIDC_JWKS_URL=https://identity.example.invalid/realms/sentinel/protocol/openid-connect/certs
+
+# ---------------------------------------------------------
+# REDIS SESSION CACHE
+# ---------------------------------------------------------
+REDIS_URL=redis://localhost:6379/0
+REDIS_PASSWORD=
+
+# ---------------------------------------------------------
+# SURICATA FORWARDER
+# ---------------------------------------------------------
+SENTINEL_EVE=/var/log/suricata/eve.json
+SENTINEL_EVENTS_URL=http://localhost:8080/v1/events
+SENTINEL_EVENTS_TOKEN=
+
+# ---------------------------------------------------------
+# LOGGING
+# ---------------------------------------------------------
+SENTINEL_LOG_LEVEL=INFO
+SENTINEL_LOG_FORMAT=json
+
+# ---------------------------------------------------------
+# MONITORING
+# ---------------------------------------------------------
+# Prometheus metrics are exposed on /metrics
+# Grafana dashboards available at /dashboards

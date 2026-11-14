@@ -1,0 +1,21 @@
+version: 1
+name: SENTINEL Adaptive Crypto Shield
+algorithm: AES-256-GCM
+rotation:
+  max_age_seconds: 7776000        # 90 days
+  max_messages: 1000000
+  max_bytes: 10737418240          # 10 GiB
+  previous_key_grace_seconds: 86400
+  emergency_retention_seconds: 3600
+key_management:
+  provider: KMS_OR_HSM
+  key_generation: KMS_OR_HSM
+  independent_inner_outer_keys: true
+  application_key_export: forbidden
+transport:
+  protocol: TLSv1.3
+security:
+  algorithm_downgrade: forbidden
+  nonce_reuse: forbidden
+  plaintext_key_storage: forbidden
+  emergency_rotation_revokes_previous_epoch: true

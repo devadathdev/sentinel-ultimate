@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "algorithm": "AES-256-GCM",
+  "max_age_seconds": 7776000,
+  "max_messages": 1000000,
+  "max_bytes": 10737418240,
+  "previous_key_grace_seconds": 86400,
+  "emergency_retention_seconds": 3600,
+  "key_provider": "KMS_OR_HSM",
+  "independent_inner_outer_keys": true,
+  "algorithm_downgrade": "forbidden",
+  "plaintext_key_storage": "forbidden"
+}

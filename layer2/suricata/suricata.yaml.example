@@ -1,0 +1,25 @@
+# Minimal Suricata integration profile for SENTINEL Layer 2.
+# Install Suricata from your OS distribution and adapt interface/address settings.
+
+vars:
+  address-groups:
+    HOME_NET: "[10.10.10.0/24,10.10.20.0/24,10.10.30.0/24,10.10.40.0/24,10.10.50.0/24,10.10.60.0/24]"
+    EXTERNAL_NET: "any"
+
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: /var/log/suricata/eve.json
+      types:
+        - alert
+        - dns
+        - http
+        - tls
+        - flow
+
+af-packet:
+  - interface: eth1
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
