@@ -74,19 +74,55 @@ def identity_from_claims(claims: dict[str, Any]) -> Identity:
 
 
 class SessionRegistry:
-    """In-memory reference implementation; production should use a shared store/IdP session service."""
-    def __init__(self) -> None:
+    """Session and token revocation registry with optional durable Redis backing and local memory cache."""
+    def __init__(self, redis_url: str | None = None) -> None:
         self.revoked_subjects: set[str] = set()
         self.revoked_tokens: set[str] = set()
+        self._redis = None
+        if redis_url:
+            try:
+                import redis
+                client = redis.Redis.from_url(redis_url, socket_connect_timeout=1.5, socket_timeout=1.5)
+                client.ping()
+                self._redis = client
+                # Warm cache from redis
+                cached_subs = client.smembers("sentinel:revoked_subjects")
+                self.revoked_subjects.update(s.decode() if isinstance(s, bytes) else str(s) for s in cached_subs)
+                cached_tokens = client.smembers("sentinel:revoked_tokens")
+                self.revoked_tokens.update(t.decode() if isinstance(t, bytes) else str(t) for t in cached_tokens)
+            except Exception:
+                self._redis = None
 
     def revoke_subject(self, subject: str) -> None:
         self.revoked_subjects.add(subject)
+        if self._redis:
+            try:
+                self._redis.sadd("sentinel:revoked_subjects", subject)
+            except Exception:
+                pass
 
     def revoke_token(self, token_id: str) -> None:
         self.revoked_tokens.add(token_id)
+        if self._redis:
+            try:
+                self._redis.sadd("sentinel:revoked_tokens", token_id)
+            except Exception:
+                pass
 
     def is_revoked(self, identity: Identity) -> bool:
-        return identity.subject in self.revoked_subjects or bool(identity.token_id and identity.token_id in self.revoked_tokens)
+        if identity.subject in self.revoked_subjects or bool(identity.token_id and identity.token_id in self.revoked_tokens):
+            return True
+        if self._redis:
+            try:
+                if self._redis.sismember("sentinel:revoked_subjects", identity.subject):
+                    self.revoked_subjects.add(identity.subject)
+                    return True
+                if identity.token_id and self._redis.sismember("sentinel:revoked_tokens", identity.token_id):
+                    self.revoked_tokens.add(identity.token_id)
+                    return True
+            except Exception:
+                pass
+        return False
 
 
 @dataclass(frozen=True)

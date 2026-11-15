@@ -51,9 +51,33 @@ class Decision:
     reason: str
     risk: str
 
+class ReplayGuard:
+    """Sliding-window replay attack defense for cryptographic envelopes."""
+    def __init__(self, max_age_seconds: int = 86400):
+        self.max_age_seconds = max_age_seconds
+        self._seen: dict[str, float] = {}
+
+    def is_replayed(self, event_id: str, timestamp: float) -> bool:
+        now = time.time()
+        # Prune expired entries
+        cutoff = now - self.max_age_seconds
+        self._seen = {k: ts for k, ts in self._seen.items() if ts >= cutoff}
+        if event_id in self._seen:
+            return True
+        self._seen[event_id] = timestamp
+        return False
+
 class PolicyEngine:
     HIGH_RISK_TOOLS = {"shell", "deploy", "force_push", "delete", "secrets", "network_admin"}
     SAFE_TOOLS = {"web_search", "read_file", "read_project", "create_code"}
+    DANGEROUS_ARG_PATTERNS = (
+        "../", r"..\\", "%2e%2e",
+        "/etc/shadow", "/etc/passwd", "/proc/",
+        "169.254.169.254", "metadata.google.internal",
+        "rm -rf", "format c:", "del /f", "mkfs", ":(){ :|:& };:",
+        "ignore previous instructions", "bypass security", "developer mode", "override instructions"
+    )
+    DANGEROUS_EXEC_TOKENS = (";", "&&", "||", "|", "`", "$(", ">", ">>", "<")
 
     def authorize(self, *, identity: str, role: str, method: str, path: str, body_size: int, zone: str) -> Decision:
         if not identity:
@@ -68,9 +92,17 @@ class PolicyEngine:
             return Decision(False, "BLOCK", "method_not_allowed", "MEDIUM")
         return Decision(True, "ALLOW", "policy_pass", "LOW")
 
-    def authorize_tool(self, *, identity: str, role: str, tool: str, approved: bool) -> Decision:
+    def authorize_tool(self, *, identity: str, role: str, tool: str, approved: bool, args: dict | None = None) -> Decision:
         if not identity:
             return Decision(False, "BLOCK", "missing_identity", "HIGH")
+        
+        # Deep inspection of tool arguments
+        if args:
+            args_str = json.dumps(args).lower()
+            for pattern in self.DANGEROUS_ARG_PATTERNS:
+                if pattern in args_str:
+                    return Decision(False, "BLOCK", "threat_signature_detected_in_tool_args", "CRITICAL")
+
         if tool in self.SAFE_TOOLS:
             return Decision(True, "ALLOW", "safe_tool", "LOW")
         if tool in self.HIGH_RISK_TOOLS:
@@ -84,6 +116,15 @@ class PolicyEngine:
             return Decision(False, "BLOCK", "execution_requires_sandbox", "CRITICAL")
         if role not in {"developer", "admin"}:
             return Decision(False, "BLOCK", "role_cannot_execute", "HIGH")
+
+        # Anti-chaining and subshell escape prevention
+        for token in self.DANGEROUS_EXEC_TOKENS:
+            if token in command:
+                return Decision(False, "BLOCK", "command_chaining_forbidden", "CRITICAL")
+
+        if " -c " in command:
+            return Decision(False, "BLOCK", "inline_code_execution_forbidden", "CRITICAL")
+
         allowed_prefixes = ("python -m pytest", "python -m compileall", "git status", "git diff")
         if not command.startswith(allowed_prefixes):
             return Decision(False, "REQUIRE_APPROVAL", "command_not_on_safe_allowlist", "HIGH")

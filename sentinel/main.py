@@ -14,7 +14,7 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from .config import settings
-from .security import PolicyEngine, RateLimiter, EncryptedEventStore, event_id
+from .security import PolicyEngine, RateLimiter, EncryptedEventStore, ReplayGuard, event_id
 from .identity import Identity, IdentityPolicy, SessionRegistry, TokenVerifier, IdentityError
 from crypto.adaptive import AdaptiveCryptoVault, RotationPolicy, RotationReason
 
@@ -91,7 +91,8 @@ policy = PolicyEngine()
 limiter = RateLimiter(settings.rate_limit_per_minute)
 store = EncryptedEventStore()
 identity_policy = IdentityPolicy()
-sessions = SessionRegistry()
+sessions = SessionRegistry(settings.redis_url)
+replay_guard = ReplayGuard()
 
 
 def _audit_crypto_event(event: dict):
@@ -126,6 +127,7 @@ class ToolRequest(BaseModel):
     role: str
     tool: str
     approved: bool = False
+    args: dict | None = None
 
 
 class ExecRequest(BaseModel):
@@ -175,12 +177,18 @@ class CryptoOpenRequest(BaseModel):
     envelope: dict
     aad: str | None = None
     as_base64: bool = False
+    replay_check: bool = True
 
 
 @app.middleware("http")
 async def edge_guard(request: Request, call_next):
     start = time.time()
     client = request.client.host if request.client else "unknown"
+
+    # Block dangerous diagnostic HTTP methods
+    if request.method.upper() in {"TRACE", "TRACK", "CONNECT"}:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "method_not_allowed"}, status_code=405)
 
     # Rate limiting
     if not limiter.allow(client):
@@ -196,6 +204,15 @@ async def edge_guard(request: Request, call_next):
         return JSONResponse({"error": "tls_required"}, status_code=400)
 
     response = await call_next(request)
+
+    # Hardened Defense-in-Depth Security Headers
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; sandbox"
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
     # Record latency
     REQUEST_DURATION.labels(
@@ -426,9 +443,19 @@ def crypto_seal(req: CryptoSealRequest):
 
 @app.post("/v1/crypto/open")
 def crypto_open(req: CryptoOpenRequest):
-    """Decrypt data sealed with 2-layer AES-256-GCM envelope."""
+    """Decrypt data sealed with 2-layer AES-256-GCM envelope with replay attack protection."""
     from fastapi import HTTPException
     try:
+        # Replay Attack Prevention (if enabled)
+        if req.replay_check:
+            env_id = req.envelope.get("event_id")
+            env_ts = float(req.envelope.get("created_at", time.time()))
+            if env_id and replay_guard.is_replayed(env_id, env_ts):
+                audit = {"source": "layer6_crypto", "event_type": "replay_attack_detected", "event_id": env_id, "ts": time.time()}
+                audit["id"] = event_id(audit)
+                store.append(audit)
+                raise HTTPException(status_code=400, detail="replay_attack_detected")
+
         aad_bytes = req.aad.encode("utf-8") if req.aad else b""
         decrypted = crypto_vault.open(req.envelope, aad=aad_bytes)
         if req.as_base64:

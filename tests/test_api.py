@@ -183,7 +183,8 @@ def test_adaptive_crypto_vault_lifecycle(client):
     # Old envelope is still decryptable within grace period
     r_open_old = client.post("/v1/crypto/open", json={
         "envelope": envelope,
-        "aad": "mission-42"
+        "aad": "mission-42",
+        "replay_check": False
     })
     assert r_open_old.status_code == 200
     assert r_open_old.json()["plaintext"] == "Classified Sentinel Mission Data"
@@ -224,3 +225,75 @@ def test_event_logging(client):
     assert r.status_code == 200
     assert r.json()["accepted"] is True
     assert "event_id" in r.json()
+
+
+def test_edge_security_headers(client):
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.headers["Strict-Transport-Security"] == "max-age=63072000; includeSubDomains; preload"
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["X-Frame-Options"] == "DENY"
+    assert "default-src 'none'" in r.headers["Content-Security-Policy"]
+    assert "no-store" in r.headers["Cache-Control"]
+
+
+def test_trace_method_blocked(client):
+    r = client.request("TRACE", "/health")
+    assert r.status_code == 405
+
+
+def test_deep_ai_firewall_threat_signature_blocked(client):
+    # Path traversal attack in tool args
+    r_traversal = client.post("/v1/ai/tool/authorize", json={
+        "identity": "brahma",
+        "role": "developer",
+        "tool": "read_file",
+        "args": {"path": "../../etc/shadow"},
+        "approved": False
+    })
+    assert r_traversal.status_code == 200
+    assert r_traversal.json()["allow"] is False
+    assert r_traversal.json()["reason"] == "threat_signature_detected_in_tool_args"
+    assert r_traversal.json()["risk"] == "CRITICAL"
+
+    # SSRF attack in tool args
+    r_ssrf = client.post("/v1/ai/tool/authorize", json={
+        "identity": "brahma",
+        "role": "developer",
+        "tool": "web_search",
+        "args": {"query": "http://169.254.169.254/latest/meta-data/"},
+        "approved": False
+    })
+    assert r_ssrf.status_code == 200
+    assert r_ssrf.json()["allow"] is False
+    assert r_ssrf.json()["reason"] == "threat_signature_detected_in_tool_args"
+
+
+def test_execution_sandbox_command_chaining_blocked(client):
+    r_chain = client.post("/v1/execute/authorize", json={
+        "identity": "brahma",
+        "role": "developer",
+        "command": "python -m pytest tests/ ; rm -rf /",
+        "sandbox": True
+    })
+    assert r_chain.status_code == 200
+    assert r_chain.json()["allow"] is False
+    assert r_chain.json()["reason"] == "command_chaining_forbidden"
+    assert r_chain.json()["risk"] == "CRITICAL"
+
+
+def test_crypto_replay_attack_prevention(client):
+    # Seal a payload
+    r_seal = client.post("/v1/crypto/seal", json={"plaintext": "one-time-token"})
+    assert r_seal.status_code == 200
+    envelope = r_seal.json()["envelope"]
+
+    # First open succeeds
+    r_open1 = client.post("/v1/crypto/open", json={"envelope": envelope})
+    assert r_open1.status_code == 200
+    assert r_open1.json()["plaintext"] == "one-time-token"
+
+    # Second open of the identical envelope triggers replay attack protection
+    r_open2 = client.post("/v1/crypto/open", json={"envelope": envelope})
+    assert r_open2.status_code == 400
+    assert r_open2.json()["detail"] == "replay_attack_detected"

@@ -18,6 +18,8 @@ services:
       dockerfile: Dockerfile
     container_name: sentinel-api
     restart: unless-stopped
+    ports:
+      - "8081:8080"
     user: "1000:1000"
     read_only: true
     tmpfs:
@@ -43,6 +45,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
     networks:
       - sentinel-internal
+      - sentinel-external
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
       interval: 30s
@@ -206,10 +209,9 @@ services:
     user: "65534:65534"
     read_only: true
     tmpfs:
-      - /prometheus
-      - /tmp
+      - /tmp:size=64M,mode=1777
     ports:
-      - "9090:9090"
+      - "9091:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -239,13 +241,13 @@ services:
     user: "472:472"
     read_only: true
     tmpfs:
-      - /var/lib/grafana
-      - /tmp
+      - /tmp:size=64M,mode=1777
     ports:
       - "3000:3000"
     volumes:
-      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin

@@ -24,6 +24,7 @@ class Settings:
         "SENTINEL_EVENT_STORE",
         "/app/data/sentinel-events.enc" if os.path.exists("/app/data") else "sentinel-events.enc"
     )
+    redis_url: str = os.getenv("REDIS_URL", "")
 
 
 settings = Settings()
