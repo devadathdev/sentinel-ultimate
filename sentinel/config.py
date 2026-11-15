@@ -20,6 +20,10 @@ class Settings:
     master_key: str = os.getenv("SENTINEL_MASTER_KEY", "")
     trusted_proxy: bool = os.getenv("SENTINEL_TRUST_PROXY", "false").lower() == "true"
     env: str = os.getenv("SENTINEL_ENV", "production")
+    event_store_path: str = os.getenv(
+        "SENTINEL_EVENT_STORE",
+        "/app/data/sentinel-events.enc" if os.path.exists("/app/data") else "sentinel-events.enc"
+    )
 
 
 settings = Settings()

@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from .config import settings
 
 class EncryptedEventStore:
-    def __init__(self, path="sentinel-events.enc"):
+    def __init__(self, path=None):
         key_b64 = settings.master_key
         if not key_b64:
             self.key = None
@@ -14,7 +14,7 @@ class EncryptedEventStore:
             self.key = base64.urlsafe_b64decode(key_b64 + "=" * (-len(key_b64) % 4))
             if len(self.key) != 32:
                 raise ValueError("SENTINEL_MASTER_KEY must decode to exactly 32 bytes")
-        self.path = path
+        self.path = path or settings.event_store_path
 
     def append(self, event: dict):
         if not self.key:

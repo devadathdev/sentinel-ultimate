@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Runtime stage
 FROM python:3.13-slim AS runtime
@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy Python packages from builder
-COPY --from=builder /root/.local /home/sentinel/.local
+COPY --from=builder /install /usr/local
 
 # Copy application code
 COPY --chown=sentinel:sentinel sentinel/ ./sentinel/
@@ -39,7 +39,7 @@ COPY --chown=sentinel:sentinel layer2/ ./layer2/
 COPY --chown=sentinel:sentinel layer3/ ./layer3/
 
 # Environment
-ENV PATH="/home/sentinel/.local/bin:${PATH}"
+ENV PATH="${PATH}"
 ENV PYTHONPATH="/app:${PYTHONPATH}"
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
