@@ -1,0 +1,36 @@
+version: 1
+name: SENTINEL Layer 7 Execution Sandbox Policy
+
+sandbox:
+  enforce_isolation: true
+  seccomp_profile: layer7/seccomp/sentinel-default.json
+  default_timeout_seconds: 30
+  limits:
+    cpus: "1.0"
+    memory: "512M"
+    pids: 100
+    tmpfs_size: "100M"
+
+allowlist:
+  binaries:
+    python:
+      execution_mode: module_only   # requires -m
+      allowed_modules:
+        - pytest
+        - compileall
+    git:
+      allowed_subcommands:
+        - status
+        - diff
+        - log
+    ruff:
+      allowed_subcommands:
+        - check
+        - format
+
+restrictions:
+  prohibit_subshells: true
+  prohibit_command_chaining: true
+  prohibit_pipes: true
+  prohibit_redirections: true
+  prohibit_inline_code_eval: true

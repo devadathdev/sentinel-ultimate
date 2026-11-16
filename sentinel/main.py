@@ -17,6 +17,13 @@ from .config import settings
 from .security import PolicyEngine, RateLimiter, EncryptedEventStore, ReplayGuard, event_id
 from .identity import Identity, IdentityPolicy, SessionRegistry, TokenVerifier, IdentityError
 from crypto.adaptive import AdaptiveCryptoVault, RotationPolicy, RotationReason
+from layer4.waf import WAFEngine, ViolationType
+from layer4.rate_limiter import ApplicationRateLimiter
+from layer5.prompt_guard import PromptGuard, InjectionType
+from layer5.tool_policy import AIToolPolicyEngine, ToolRiskTier
+from layer5.dlp import DataLossPreventer
+from layer7.sandbox_policy import SandboxPolicyEngine, ExecutionTicket
+from layer7.command_parser import SafeCommandParser
 
 
 # Prometheus Metrics
@@ -33,6 +40,21 @@ AI_TOOL_TOTAL = Counter(
     'sentinel_ai_tool_total',
     'Total AI tool authorization decisions',
     ['action', 'tool', 'risk']
+)
+WAF_BLOCKS_TOTAL = Counter(
+    'sentinel_waf_blocks_total',
+    'Total WAF blocked requests',
+    ['violation', 'risk']
+)
+PROMPT_INJECTIONS_TOTAL = Counter(
+    'sentinel_prompt_injections_total',
+    'Total prompt injection attempts',
+    ['threat_type', 'risk']
+)
+DLP_VIOLATIONS_TOTAL = Counter(
+    'sentinel_dlp_violations_total',
+    'Total DLP data leak attempts',
+    ['detector', 'severity']
 )
 EXECUTION_TOTAL = Counter(
     'sentinel_execution_total',
@@ -89,6 +111,12 @@ app = FastAPI(
 
 policy = PolicyEngine()
 limiter = RateLimiter(settings.rate_limit_per_minute)
+waf = WAFEngine()
+app_rate_limiter = ApplicationRateLimiter(default_limit=settings.rate_limit_per_minute)
+prompt_guard = PromptGuard()
+ai_tool_policy = AIToolPolicyEngine()
+dlp = DataLossPreventer()
+sandbox_policy = SandboxPolicyEngine()
 store = EncryptedEventStore()
 identity_policy = IdentityPolicy()
 sessions = SessionRegistry(settings.redis_url)
@@ -180,6 +208,36 @@ class CryptoOpenRequest(BaseModel):
     replay_check: bool = True
 
 
+class WAFInspectRequest(BaseModel):
+    method: str = "GET"
+    path: str = "/"
+    headers: dict[str, str] = {}
+    body: str | None = None
+    content_type: str | None = None
+
+
+class PromptScanRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+
+
+class DLPScanRequest(BaseModel):
+    text: str = Field(min_length=1)
+    redact: bool = True
+
+
+class VerifyTicketRequest(BaseModel):
+    ticket_id: str
+    command: str
+    identity: str
+    role: str
+    created_at: int
+    expires_at: int
+    signature: str
+    cpu_limit: str = "1.0"
+    memory_limit: str = "512m"
+    timeout_seconds: int = 30
+
+
 @app.middleware("http")
 async def edge_guard(request: Request, call_next):
     start = time.time()
@@ -189,6 +247,31 @@ async def edge_guard(request: Request, call_next):
     if request.method.upper() in {"TRACE", "TRACK", "CONNECT"}:
         from fastapi.responses import JSONResponse
         return JSONResponse({"error": "method_not_allowed"}, status_code=405)
+
+    # Layer 4 Application Fortress: WAF URI & Header inspection
+    waf_res = waf.inspect_request(
+        method=request.method,
+        path=request.url.path,
+        headers=dict(request.headers),
+        content_type=request.headers.get("content-type")
+    )
+    if not waf_res.allowed:
+        WAF_BLOCKS_TOTAL.labels(violation=waf_res.reason, risk=waf_res.risk).inc()
+        event = {
+            "ts": time.time(), "source": client, "event": "waf_block",
+            "reason": waf_res.reason, "violations": waf_res.violations,
+            "path": request.url.path, "method": request.method
+        }
+        store.append({**event, "id": event_id(event)})
+        from fastapi.responses import JSONResponse
+        status_code = 405 if waf_res.reason == "method_not_allowed" else 400
+        return JSONResponse({
+            "error": "waf_blocked",
+            "layer": 4,
+            "reason": waf_res.reason,
+            "risk": waf_res.risk,
+            "violations": waf_res.violations
+        }, status_code=status_code)
 
     # Rate limiting
     if not limiter.allow(client):
@@ -277,6 +360,15 @@ def status():
             "6_data": f"active — Adaptive double AES-256-GCM (epoch: {crypto_vault.active_epoch.epoch_id})",
             "7_execution": "sandbox policy active",
         },
+        "layer_details": {
+            "1_edge": "TLS 1.3 / Strict Transport Security / Anti-DDoS / Dual-Stack Edge Proxy",
+            "2_network": "Stateful nftables / Zone Microsegmentation / Strict Inter-Zone Drop",
+            "3_identity": "OIDC Identity Boundary / ABAC Policies / Step-Up MFA / Redis Revocation",
+            "4_application": "WAF Engine / Injection Filters / Path Traversal Defense / Rate Limiter",
+            "5_ai": "Prompt Injection Scanner / Jailbreak Shield / Tool Risk Tiers / DLP Redaction",
+            "6_data": f"Adaptive Key Rotation / Two-Layer AES-256-GCM Vault (epoch: {crypto_vault.active_epoch.epoch_id})",
+            "7_execution": "Safe Command Lexical Parser / Seccomp Sandbox Profile / Cryptographic Tickets",
+        },
     }
 
 
@@ -334,23 +426,139 @@ def authorize(req: AuthRequest):
 
 @app.post("/v1/ai/tool/authorize")
 def authorize_tool(req: ToolRequest):
-    decision = policy.authorize_tool(**req.model_dump())
+    decision = ai_tool_policy.evaluate(
+        identity=req.identity,
+        role=req.role,
+        tool=req.tool,
+        approved=req.approved,
+        args=req.args
+    )
 
     AI_TOOL_TOTAL.labels(action=decision.action, tool=req.tool, risk=decision.risk).inc()
 
-    return decision.__dict__
+    return {
+        "allow": decision.allow,
+        "action": decision.action,
+        "reason": decision.reason,
+        "risk": decision.risk,
+        "violations": decision.violations
+    }
 
 
 @app.post("/v1/execute/authorize")
 def authorize_execution(req: ExecRequest):
-    decision = policy.authorize_execution(**req.model_dump())
+    decision = sandbox_policy.authorize(
+        identity=req.identity,
+        role=req.role,
+        command=req.command,
+        sandbox=req.sandbox
+    )
 
     # Categorize command for metrics
     cmd_type = "pytest" if "pytest" in req.command else ("compile" if "compileall" in req.command else ("git" if "git" in req.command else "other"))
-
     EXECUTION_TOTAL.labels(action=decision.action, command_type=cmd_type, risk=decision.risk).inc()
 
-    return decision.__dict__
+    res = {
+        "allow": decision.allow,
+        "action": decision.action,
+        "reason": decision.reason,
+        "risk": decision.risk,
+        "violations": decision.violations
+    }
+    if decision.ticket:
+        res["ticket"] = {
+            "ticket_id": decision.ticket.ticket_id,
+            "command": decision.ticket.command,
+            "identity": decision.ticket.identity,
+            "role": decision.ticket.role,
+            "created_at": decision.ticket.created_at,
+            "expires_at": decision.ticket.expires_at,
+            "timeout_seconds": decision.ticket.timeout_seconds,
+            "cpu_limit": decision.ticket.cpu_limit,
+            "memory_limit": decision.ticket.memory_limit,
+            "signature": decision.ticket.signature
+        }
+    return res
+
+
+@app.post("/v1/app/waf/inspect")
+def app_waf_inspect(req: WAFInspectRequest):
+    """Layer 4 Application Fortress - Deep HTTP request and payload inspection."""
+    res = waf.inspect_request(
+        method=req.method,
+        path=req.path,
+        headers=req.headers,
+        body=req.body,
+        content_type=req.content_type
+    )
+    if not res.allowed:
+        WAF_BLOCKS_TOTAL.labels(violation=res.reason, risk=res.risk).inc()
+    return {
+        "allowed": res.allowed,
+        "action": res.action,
+        "reason": res.reason,
+        "risk": res.risk,
+        "violations": res.violations
+    }
+
+
+@app.post("/v1/ai/prompt/scan")
+def ai_prompt_scan(req: PromptScanRequest):
+    """Layer 5 AI Firewall - Prompt injection, jailbreak, and adversarial heuristic scanner."""
+    res = prompt_guard.scan_prompt(req.prompt)
+    if not res.is_safe:
+        threat_val = res.detected_types[0] if res.detected_types else "injection"
+        PROMPT_INJECTIONS_TOTAL.labels(threat_type=threat_val, risk=res.risk).inc()
+    return {
+        "is_safe": res.is_safe,
+        "threat_type": res.detected_types[0] if res.detected_types else "none",
+        "risk": res.risk,
+        "threat_score": res.threat_score,
+        "detected_types": res.detected_types,
+        "reasons": res.reasons
+    }
+
+
+@app.post("/v1/ai/dlp/scan")
+def ai_dlp_scan(req: DLPScanRequest):
+    """Layer 5 AI Firewall - Secret leak and PII exfiltration detection/redaction engine."""
+    res = dlp.scan(req.text)
+    for f in res.findings:
+        DLP_VIOLATIONS_TOTAL.labels(detector=f.finding_type, severity=f.severity).inc()
+    return {
+        "has_leak": res.has_leak,
+        "risk": res.risk,
+        "total_findings": len(res.findings),
+        "findings": [
+            {
+                "category": f.category,
+                "finding_type": f.finding_type,
+                "match_preview": f.match_preview,
+                "severity": f.severity
+            }
+            for f in res.findings
+        ],
+        "redacted_text": res.redacted_text
+    }
+
+
+@app.post("/v1/execute/verify-ticket")
+def execute_verify_ticket(req: VerifyTicketRequest):
+    """Layer 7 Execution Sandbox - Attest and verify HMAC ticket before container admission."""
+    ticket = ExecutionTicket(
+        ticket_id=req.ticket_id,
+        command=req.command,
+        identity=req.identity,
+        role=req.role,
+        created_at=req.created_at,
+        expires_at=req.expires_at,
+        cpu_limit=req.cpu_limit,
+        memory_limit=req.memory_limit,
+        timeout_seconds=req.timeout_seconds,
+        signature=req.signature
+    )
+    valid = sandbox_policy.verify_ticket(ticket)
+    return {"valid": valid, "ticket_id": req.ticket_id}
 
 
 @app.post("/v1/events")

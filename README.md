@@ -36,8 +36,12 @@ python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_b
 - `GET /metrics` — Prometheus metrics endpoint
 - `GET /v1/security/status` — Operational status across all 7 layers
 - `POST /v1/authorize` — Layer 4 Application rate, size, and routing policy
+- `POST /v1/app/waf/inspect` — Layer 4 Application Fortress deep WAF inspection
 - `POST /v1/ai/tool/authorize` — Layer 5 AI Firewall tool risk & approval gate
-- `POST /v1/execute/authorize` — Layer 7 Execution Sandbox command allowlist gate
+- `POST /v1/ai/prompt/scan` — Layer 5 AI Firewall prompt injection & jailbreak scanner
+- `POST /v1/ai/dlp/scan` — Layer 5 AI Firewall secret leak & PII exfiltration detection/redaction
+- `POST /v1/execute/authorize` — Layer 7 Execution Sandbox command parser & ticket gate
+- `POST /v1/execute/verify-ticket` — Layer 7 Execution Sandbox HMAC ticket verification
 - `POST /v1/events` — Append security events to encrypted audit vault
 - `POST /v1/identity/authorize` — Layer 3 Identity & RBAC/ABAC verification
 - `POST /v1/identity/revoke` — Layer 3 Subject and token revocation
@@ -48,28 +52,39 @@ python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_b
 
 All security decisions are deny-by-default.
 
-## Layer 3 — Identity Fortress
+## Layer Implementations
 
-Layer 3 is implemented as an identity/authorization boundary. It provides OIDC/JWT claim validation, short-lived-token policy, RBAC + ABAC-style authorization, WebAuthn/MFA step-up signals, device identity hooks, and session/token revocation.
+### Layer 1 — Edge Shield
+- Dedicated dual-stack Nginx TLS 1.3 reverse proxy (`deploy/nginx.conf.example`).
+- Edge defense headers: HSTS (2-year preload), CSP (`default-src 'none'`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`.
+- Client certificate verification (mTLS) and diagnostic HTTP method blocking (`TRACE`, `TRACK`, `CONNECT`).
 
-New endpoints:
+### Layer 2 — Network Fortress
+- Stateful nftables rule generator (`layer2/zones.py`) implementing zone microsegmentation across `user`, `ai`, `server`, `iot`, and `management`.
+- Default-drop policy on all ingress and forward chains.
 
-- `POST /v1/identity/authorize`
-- `POST /v1/identity/revoke`
+### Layer 3 — Identity Fortress
+- Token validation with OIDC/JWT claim inspection (`layer3/identity.py`, `layer3/token.py`).
+- RBAC and ABAC boundary with step-up MFA signals (`amr` claims).
+- Redis-backed distributed session registry with in-memory caching and real-time revocation.
 
-The local JWT secret path exists only for deterministic tests. Production must use asymmetric OIDC/JWKS verification and a real identity provider. WebAuthn/passkey ceremony and private-key handling belong to that IdP, not to a homemade SENTINEL password system.
+### Layer 4 — Application Fortress
+- Production Web Application Firewall (`layer4/waf.py`) blocking path traversal (`../`, `%2e%2e`), null-byte injection (`%00`), probe endpoints (`/.env`, `/.git`, `/wp-admin`, `/etc/passwd`), SQL injection heuristics, and cross-site scripting (XSS).
+- Zone-aware sliding window rate limiter (`layer4/rate_limiter.py`) with progressive penalty box for hostile clients.
 
-## Layer 6 — Adaptive Crypto Shield (v1.1)
+### Layer 5 — AI Firewall
+- Prompt Guard (`layer5/prompt_guard.py`): Direct Prompt Injection (DPI) detection, jailbreak roleplay detection, control token spoofing (`<|im_start|>`, `[INST]`), and base64 obfuscation decoding.
+- Tool Governance Engine (`layer5/tool_policy.py`): 5-tier risk taxonomy (`SAFE`, `LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), deep argument threat inspection, and dual-control approval for critical actions.
+- Data Loss Prevention Engine (`layer5/dlp.py`): Real-time regex and checksum scanner detecting API keys (OpenAI, AWS, GitHub, private keys, JWTs) and PII (SSN, credit cards with Luhn check, emails) with automatic redaction.
 
-Layer 6 adds an adaptive post-layer cryptographic double-envelope around application payloads:
-1. Inner layer: authenticated encryption with independent AES-256-GCM key.
-2. Outer layer: authenticated encryption with independent outer AES-256-GCM key.
-3. Cryptographic epochs: automatic key rotation triggered by epoch age, message volume, byte volume, or security incidents.
-4. Grace & Revocation: retired epochs remain decryptable during a bounded grace window (default 24h) and can be immediately revoked in an emergency lockdown.
+### Layer 6 — Adaptive Crypto Shield (v1.1)
+- Two-layer AES-256-GCM envelope encryption with independent keys per layer.
+- Automatic key rotation based on message limits, byte volume, or time.
+- Sliding-window ReplayGuard defending against envelope replay attacks.
+- Grace window for retired keys and immediate emergency epoch revocation.
 
-New endpoints:
-- `GET /v1/crypto/status`: Inspect active epoch ID, age, total epochs, message/byte count, and rotation policy.
-- `POST /v1/crypto/rotate`: Trigger rotation with reasons `administrative`, `schedule`, `usage`, `security_event`, or `emergency`.
-- `POST /v1/crypto/seal`: Authenticate and encrypt application plaintext under active epoch keys.
-- `POST /v1/crypto/open`: Verify and decrypt sealed envelope, honoring epoch grace windows and rejecting revoked epochs.
+### Layer 7 — Execution Sandbox
+- Lexical anti-evasion analyzer (`layer7/command_parser.py`) blocking shell escapes, command chaining (`;`, `&&`, `||`), pipes (`|`), substitutions (`` ` ``, `$()`), and arbitrary inline eval (`-c`).
+- Zero-trust execution boundary (`layer7/sandbox_policy.py`) requiring sandboxing (`sandbox=True`) and issuing attested, HMAC-SHA256 signed `ExecutionTicket`s.
+- Hardened Linux seccomp profile (`layer7/seccomp/sentinel-default.json`) blocking dangerous syscalls (`ptrace`, `bpf`, `mount`, `chroot`).
 

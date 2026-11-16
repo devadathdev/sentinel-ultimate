@@ -1,0 +1,38 @@
+version: 1
+name: SENTINEL Layer 5 AI Firewall Policy
+
+prompt_guard:
+  enabled: true
+  threat_threshold: 0.5
+  block_override_patterns: true
+  block_jailbreak_framing: true
+  inspect_base64_obfuscation: true
+
+tools:
+  default_policy: deny
+  require_approval_for_high_risk: true
+  require_dual_control_for_critical: true
+  deep_argument_inspection: true
+  prohibited_argument_patterns:
+    - "../"
+    - "..\\"
+    - "/etc/shadow"
+    - "/etc/passwd"
+    - "169.254.169.254"
+    - "rm -rf"
+    - "format c:"
+    - "drop table"
+
+dlp:
+  enabled: true
+  redact_model_outputs: true
+  detect_secrets:
+    - OPENAI_KEY
+    - GITHUB_PAT
+    - AWS_ACCESS_KEY
+    - PRIVATE_KEY_BLOCK
+    - JWT_TOKEN
+  detect_pii:
+    - SSN
+    - EMAIL
+    - CREDIT_CARD
